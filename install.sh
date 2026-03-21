@@ -18,24 +18,42 @@ err() {
   printf '[ERROR] %s\n' "$*" >&2
 }
 
-require_root() {
-  if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    err "Run this script as root."
+SUDO=""
+setup_sudo() {
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    SUDO=""
+    return
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    err "This script needs sudo, but sudo is not installed."
     exit 1
+  fi
+
+  log "Requesting sudo access..."
+  sudo -v
+  SUDO="sudo"
+}
+
+run_priv() {
+  if [ -n "$SUDO" ]; then
+    sudo "$@"
+  else
+    "$@"
   fi
 }
 
 install_packages() {
   log "Installing required packages..."
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends openssl apache2 ssl-cert ca-certificates
+  run_priv apt-get update
+  run_priv apt-get install -y --no-install-recommends openssl apache2 ssl-cert ca-certificates
 }
 
 ensure_dirs() {
-  mkdir -p /etc/ssl/certs /etc/ssl/private
-  chmod 755 /etc/ssl/certs
-  chmod 710 /etc/ssl/private || true
+  run_priv mkdir -p /etc/ssl/certs /etc/ssl/private
+  run_priv chmod 755 /etc/ssl/certs
+  run_priv chmod 710 /etc/ssl/private || true
 }
 
 get_cn() {
@@ -52,7 +70,7 @@ cert_is_valid() {
 key_matches_cert() {
   local cert_mod key_mod
   cert_mod="$(openssl x509 -noout -modulus -in "$CERT_FILE" 2>/dev/null | openssl md5 2>/dev/null || true)"
-  key_mod="$(openssl rsa  -noout -modulus -in "$KEY_FILE"  2>/dev/null | openssl md5 2>/dev/null || true)"
+  key_mod="$(openssl rsa -noout -modulus -in "$KEY_FILE" 2>/dev/null | openssl md5 2>/dev/null || true)"
   [ -n "$cert_mod" ] && [ "$cert_mod" = "$key_mod" ]
 }
 
@@ -60,7 +78,7 @@ generate_cert_openssl() {
   local cn
   cn="$(get_cn)"
   log "Generating self-signed certificate for CN=$cn ..."
-  openssl req -x509 -nodes -newkey rsa:2048 \
+  run_priv openssl req -x509 -nodes -newkey rsa:2048 \
     -keyout "$KEY_FILE" \
     -out "$CERT_FILE" \
     -days "$DAYS" \
@@ -69,17 +87,17 @@ generate_cert_openssl() {
 
 generate_cert_ssl_cert() {
   log "Generating default Debian snakeoil certificate..."
-  make-ssl-cert generate-default-snakeoil --force-overwrite
+  run_priv make-ssl-cert generate-default-snakeoil --force-overwrite
 }
 
 fix_permissions() {
-  chmod 600 "$KEY_FILE"
-  chmod 644 "$CERT_FILE"
-  chown root:root "$KEY_FILE" "$CERT_FILE"
+  run_priv chmod 600 "$KEY_FILE"
+  run_priv chmod 644 "$CERT_FILE"
+  run_priv chown root:root "$KEY_FILE" "$CERT_FILE"
 
   if getent group ssl-cert >/dev/null 2>&1; then
-    chgrp ssl-cert "$KEY_FILE" || true
-    chmod 640 "$KEY_FILE" || true
+    run_priv chgrp ssl-cert "$KEY_FILE" || true
+    run_priv chmod 640 "$KEY_FILE" || true
   fi
 }
 
@@ -110,25 +128,25 @@ verify_apache_expected_paths() {
 
 test_apache() {
   log "Testing Apache configuration..."
-  apachectl configtest
+  run_priv apachectl configtest
 }
 
 restart_apache() {
   log "Restarting Apache..."
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart apache2 || service apache2 restart
+    run_priv systemctl restart apache2 || run_priv service apache2 restart
   else
-    service apache2 restart
+    run_priv service apache2 restart
   fi
 }
 
 reconfigure_dpkg() {
   log "Retrying package configuration..."
-  dpkg --configure -a
+  run_priv dpkg --configure -a
 }
 
 main() {
-  require_root
+  setup_sudo
   install_packages
   ensure_dirs
   show_apache_paths
@@ -167,7 +185,7 @@ main() {
   log "Key:         $KEY_FILE"
 }
 
-main "$@"
+main "$@""
 
 cd /tmp
 wget https://repo.allstarlink.org/public/asl-apt-repos.deb13_all.deb
