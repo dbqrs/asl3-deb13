@@ -37,7 +37,7 @@ generate_cert() {
   log "Installing certificate tooling..."
   export DEBIAN_FRONTEND=noninteractive
   run_priv apt-get update
-  run_priv apt-get install -y --no-install-recommends openssl apache2 ssl-cert ca-certificates
+  run_priv apt-get install -y --no-install-recommends openssl ssl-cert ca-certificates
 
   run_priv mkdir -p /etc/ssl/certs /etc/ssl/private
 
@@ -60,21 +60,6 @@ validate_cert() {
   run_priv openssl pkey -in "$KEY_FILE" -noout >/dev/null 2>&1 || return 1
 }
 
-test_apache() {
-  log "Testing Apache configuration..."
-  run_priv apachectl configtest
-}
-
-restart_apache_if_possible() {
-  if command -v systemctl >/dev/null 2>&1 && run_priv systemctl status >/dev/null 2>&1; then
-    run_priv systemctl restart apache2 || true
-  elif command -v service >/dev/null 2>&1; then
-    run_priv service apache2 restart || true
-  else
-    warn "No working service manager detected. Skipping Apache restart."
-  fi
-}
-
 reconfigure_dpkg() {
   log "Retrying package configuration..."
   run_priv dpkg --configure -a
@@ -89,14 +74,12 @@ main() {
   fi
 
   validate_cert || { err "Certificate generation failed."; exit 1; }
-  test_apache
-  restart_apache_if_possible
+
+  log "Certificate and key are in place. Apache was not reloaded."
   reconfigure_dpkg
 }
 
 main "$@"
-
-main "$@""
 
 cd /tmp
 wget https://repo.allstarlink.org/public/asl-apt-repos.deb13_all.deb
