@@ -33,11 +33,16 @@ file_nonempty() {
   run_priv test -s "$1"
 }
 
+have_openssl() {
+  command -v openssl >/dev/null 2>&1
+}
+
 generate_cert() {
-  log "Installing certificate tooling..."
-  export DEBIAN_FRONTEND=noninteractive
-  run_priv apt-get update
-  run_priv apt-get install -y --no-install-recommends openssl ssl-cert ca-certificates
+  have_openssl || {
+    err "openssl is required to generate the certificate, but it is not installed."
+    err "Install openssl first in a clean package state, then rerun this script."
+    exit 1
+  }
 
   run_priv mkdir -p /etc/ssl/certs /etc/ssl/private
 
